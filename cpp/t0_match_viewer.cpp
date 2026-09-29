@@ -1,6 +1,9 @@
 #include "t0_match_viewer.h"
 
+#include <stdexcept>
+
 #include <TChain.h>
+#include <TTree.h>
 #include <TFile.h>
 #include <TH2F.h>
 
@@ -38,7 +41,7 @@ int GenerateT0CalibratedPid(std::string config_path, int run, int end_run) {
 	TChain gagg_chain("tree");
 	int added_runs = 0;
 	for (int current_run = run; current_run <= end_run; ++current_run) {
-		if (config.IsJumpRun(current_run)) continue;
+		if (config.IsSkipRun(current_run)) continue;
 		++added_runs;
 		d1_chain.Add(TString::Format(
 			"%s/t0d1_%04d.root",
@@ -68,18 +71,18 @@ int GenerateT0CalibratedPid(std::string config_path, int run, int end_run) {
 	t0_cali.Read(cali_dir + "/t0.txt");
 
 	// calibration parameters
-	t0::GAGGCalibrationParameters cali_param_a(25);
+	t0::GAGGCalibrationParameters gagg_cali_a(25);
 	TString cali_param_path_a = TString::Format(
 		"%s/gagg_layer1_a_Be.txt",
 		cali_dir.c_str()
 	);
-	cali_param_a.Read(cali_param_path_a.Data());
-	t0::GAGGCalibrationParameters cali_param_b(25);
+	gagg_cali_a.Read(cali_param_path_a.Data());
+	t0::GAGGCalibrationParameters gagg_cali_b(25);
 	TString cali_param_path_b = TString::Format(
 		"%s/gagg_layer1_b_Be.txt",
 		cali_dir.c_str()
 	);
-	cali_param_b.Read(cali_param_path_b.Data());
+	gagg_cali_b.Read(cali_param_path_b.Data());
 
 	TString output_path = TString::Format(
 		"%s/t0_cali_pid_%04d_%04d.root",
@@ -117,8 +120,8 @@ int GenerateT0CalibratedPid(std::string config_path, int run, int end_run) {
 					gagg_event.index[k]
 				)) continue;
 				double gagg_energy = d1_event.run < 1079
-					? cali_param_a.CaliEnergy(gagg_event.index[k], gagg_event.amplitude[k])
-					: cali_param_b.CaliEnergy(gagg_event.index[k], gagg_event.amplitude[k]);
+					? gagg_cali_a.CaliEnergy(gagg_event.index[k], gagg_event.amplitude[k])
+					: gagg_cali_b.CaliEnergy(gagg_event.index[k], gagg_event.amplitude[k]);
 				d2_gagg_pid.Fill(gagg_energy, d2_energy);
 			}
 		}
@@ -133,77 +136,91 @@ int GenerateT0CalibratedPid(std::string config_path, int run, int end_run) {
 }
 
 
-// T0MatchViewer::T0MatchViewer(std::string config_path, int run) : run_(run) {
-// 	config_.Load(config_path);
-// }
+T0MatchViewer::T0MatchViewer(const std::string &config_path, int run)
+: run_(run)
+, t0_cali_(2)
+, gagg_cali_(25)
+{
+	if (config_.Load(config_path)) {
+		throw std::invalid_argument("Invalid config path: " + config_path + ".");
+	}
+	if (config_.IsSkipRun(run_)) {
+		throw std::invalid_argument("Skip run " + std::to_string(run_) + ".");
+	}
+	const std::string ingot_dir = JoinPath(config_.root.workspace, config_.paths.ingot);
+	const std::string match_dir = JoinPath(config_.root.workspace, config_.paths.match);
+	const std::string cali_dir = JoinPath(config_.root.workspace, config_.paths.calibration);
 
+	TString d1_file_name = TString::Format(
+		"%s/t0d1_%04d.root",
+		match_dir.c_str(),
+		run_
+	);
+	TString d2_file_name = TString::Format(
+		"%s/t0d2_%04d.root",
+		match_dir.c_str(),
+		run_
+	);
+	TString gagg_file_name = TString::Format(
+		"%s/gagg_%04d.root",
+		ingot_dir.c_str(),
+		run_
+	);
+	ipf_ = new TFile(d1_file_name, "read");
+	ipt_ = (TTree*)ipf_->Get("tree");
+	if (!ipt_) {
+		throw std::invalid_argument("Input tree not found: " + d1_file_name + ".");
+	}
+	ipt_->AddFriend("d2=tree", d2_file_name);
+	ipt_->AddFriend("gagg=tree", gagg_file_name);
 
-// std::tuple<int, int, int> T0MatchViewer::Meta(
-// 	int entry
-// ) {
-// 	ipt_->GetEntry(entry);
-// 	return {d1_event_.num, d2_event_.num, gagg_event_.num};
-// }
+	SetupInput(ipt_, d1_event_);
+	SetupInput(ipt_, d2_event_, "d2.");
+	SetupInput(ipt_, gagg_event_, "gagg.");
 
-// std::tuple<double, double, std::optional<double>> calibrate_t0_energy(
-// 	const std::string &workspace,
-// 	int run,
-// 	int entry,
-// 	int d1_index,
-// 	int d2_index,
-// 	int gagg_index=-1
-// ) {
-// 	// load calibration parameters
-// 	CalibrationParameters t0_cali(2);
-// 	if (t0_cali.Read(cali_dir + "/t0.txt")) {
-// 		std::cerr << "Error: Failed to read t0 calibration parameters.\n";
-// 		return -1;
-// 	}
-// 	brill::t0::GAGGCalibrationParameters gagg_cali(25);
-// 	TString gagg_cali_path = TString::Format(
-// 		"%s/calibration/gagg_layer1_%c_Be.txt",
-// 		workspace.c_str(),
-// 		run < 1079 ? 'a' : 'b'
-// 	);
-// 	if (gagg_cali.Read(gagg_cali_path.Data())) {
-// 		std::cerr << "Error: Failed to read gagg calibration parameters.\n";
-// 		return -1;
-// 	}
+	// calibration parameters
+	t0_cali_.Read(cali_dir + "/t0.txt");
+	TString cali_param_path = TString::Format(
+		"%s/gagg_layer1_%c_Be.txt",
+		cali_dir.c_str(),
+		run_ < 1079 ? 'a' : 'b'
+	);
+	gagg_cali_.Read(cali_param_path.Data());
+}
 
-// 	TChain chain1("tree");
-// 	chain1.Add(TString::Format(
-// 		"%s/match/t0d1_%04d.root",
-// 		workspace.c_str(),
-// 		run
-// 	));
-// 	TChain chain2("tree");
-// 	chain2.Add(TString::Format(
-// 		"%s/match/t0d2_%04d.root",
-// 		workspace.c_str(),
-// 		run
-// 	));
-// 	TChain chain_gagg("tree");
-// 	chain_gagg.Add(TString::Format(
-// 		"%s/ingot/gagg_%04d.root",
-// 		workspace.c_str(),
-// 		run
-// 	));
-// 	chain1.AddFriend(&chain2, "d2");
-// 	chain1.AddFriend(&chain_gagg, "gagg");
+T0MatchViewer::~T0MatchViewer() {
+	if (ipf_) ipf_->Close();
+}
 
-// 	brill::DssdMatchEvent d1_event;
-// 	brill::DssdMatchEvent d2_event;
-// 	brill::GaggEvent gagg_event;
-// 	brill::SetupInput(&chain1, d1_event);
-// 	brill::SetupInput(&chain1, d2_event, "d2.");
-// 	brill::SetupInput(&chain1, gagg_event, "gagg.");
+int T0MatchViewer::GetEntries() const {
+	return ipt_->GetEntries();
+}
 
-// 	chain1.GetEntry(entry);
-// 	double d1_energy = t0_cali.p0[0] + t0_cali.p1[0] * d1_event.energy[d1_index];
-// 	double d2_energy = t0_cali.p0[1] + t0_cali.p1[1] * d2_event.energy[d2_index];
-// 	std::optional<double> gagg_energy = gagg_index != -1
-// 		? gagg_cali.CaliEnergy(gagg_event.index[gagg_index], gagg_event.energy[gagg_index]);
-// 		: std::optional<double>::None;
-// 	return {d1_energy, d2_energy, gagg_energy};
-// }
+std::tuple<int, int, int> T0MatchViewer::Meta(
+	int entry
+) {
+	ipt_->GetEntry(entry);
+	return {d1_event_.num, d2_event_.num, gagg_event_.num};
+}
+
+std::tuple<std::optional<double>, std::optional<double>, std::optional<double>> T0MatchViewer::CalibratedEnergy(
+	int entry,
+	int d1_index,
+	int d2_index,
+	int gagg_index
+) {
+	ipt_->GetEntry(entry);
+	std::optional<double> d1_energy, d2_energy, gagg_energy;
+	if (d1_index != -1 && d1_index < d1_event_.num) {
+		d1_energy = t0_cali_.p0[0] + t0_cali_.p1[0] * d1_event_.energy[d1_index];
+	}
+	if (d2_index != -1 && d2_index < d2_event_.num) {
+		d2_energy = t0_cali_.p0[1] + t0_cali_.p1[1] * d2_event_.energy[d2_index];
+	}
+	if (gagg_index != -1 && gagg_index < gagg_event_.num) {
+		gagg_energy = gagg_cali_.CaliEnergy(gagg_event_.index[gagg_index], gagg_event_.energy[gagg_index]);
+	}
+	return {d1_energy, d2_energy, gagg_energy};
+}
+
 }
