@@ -218,7 +218,10 @@ std::tuple<std::optional<double>, std::optional<double>, std::optional<double>> 
 		d2_energy = t0_cali_.p0[1] + t0_cali_.p1[1] * d2_event_.energy[d2_index];
 	}
 	if (gagg_index != -1 && gagg_index < gagg_event_.num) {
-		gagg_energy = gagg_cali_.CaliEnergy(gagg_event_.index[gagg_index], gagg_event_.energy[gagg_index]);
+		gagg_energy = gagg_cali_.CaliEnergy(
+			gagg_event_.index[gagg_index],
+			gagg_event_.amplitude[gagg_index]
+		);
 	}
 	return {d1_energy, d2_energy, gagg_energy};
 }
