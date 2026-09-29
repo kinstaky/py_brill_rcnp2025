@@ -1,0 +1,4 @@
+add_library(t0_match_viewer t0_match_viewer.cpp)
+target_include_directories(t0_match_viewer PUBLIC ${PROJECT_SOURCE_DIR})
+target_link_libraries(t0_match_viewer PUBLIC gagg_event t0_utils brill_t0_dssd ROOT::Hist)
+set_target_properties(t0_match_viewer PROPERTIES POSITION_INDEPENDENT_CODE ON)
