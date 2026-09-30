@@ -53,12 +53,18 @@ int GenerateT0CalibratedPid(std::string config_path, int run, int end_run) {
 			match_dir.c_str(),
 			current_run
 		));
+		gagg_chain.Add(TString::Format(
+			"%s/gagg_%04d.root",
+			ingot_dir.c_str(),
+			current_run
+		));
 	}
 	if (added_runs == 0) {
 		std::cout << "No runs to process after applying jump_run.\n";
 		return 0;
 	}
 	d1_chain.AddFriend(&d2_chain, "d2");
+	d1_chain.AddFriend(&gagg_chain, "gagg");
 
 	DssdMatchEvent d1_event;
 	DssdMatchEvent d2_event;
@@ -92,8 +98,8 @@ int GenerateT0CalibratedPid(std::string config_path, int run, int end_run) {
 	);
 
 	TFile opf(output_path, "recreate");
-	TH2F d1d2_pid("d1d2", "D1-D2 PID", 1000, 0.0, 500.0, 1000, 0.0, 500.0);
-	TH2F d2_gagg_pid("d2gagg", "D2-GAGG PID", 1000, 0.0, 500.0, 1000, 0.0, 300.0);
+	TH2F d1d2_pid("d1d2", "D1-D2 PID", 1000, 0.0, 300.0, 1000, 0.0, 200.0);
+	TH2F d2_gagg_pid("d2gagg", "D2-GAGG PID", 1000, 0.0, 350.0, 1000, 0.0, 250.0);
 
 	for (long long entry = 0; entry < d1_chain.GetEntriesFast(); ++entry) {
 		d1_chain.GetEntry(entry);
